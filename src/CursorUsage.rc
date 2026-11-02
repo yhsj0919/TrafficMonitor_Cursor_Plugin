@@ -4,13 +4,13 @@
 
 IDD_OPTIONS DIALOGEX 0, 0, 340, 185
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Codex Usage 插件选项"
+CAPTION "Cursor Usage 插件选项"
 FONT 9, "Microsoft YaHei UI"
 BEGIN
-    LTEXT "访问令牌路径（auth.json）：", -1, 10, 10, 310, 12
+    LTEXT "访问令牌路径（state.vscdb 或 auth.json）：", -1, 10, 10, 310, 12
     EDITTEXT IDC_AUTH_PATH, 10, 26, 265, 15, ES_AUTOHSCROLL
     PUSHBUTTON "浏览…", IDC_BROWSE_AUTH, 280, 25, 50, 17
-    LTEXT "留空使用默认路径：CODEX_HOME 或用户目录下的 .codex。", -1, 10, 46, 320, 22
+    LTEXT "留空自动查找：state.vscdb，然后 %APPDATA%\\Cursor\\auth.json / %USERPROFILE%\\.cursor\\auth.json。", -1, 10, 46, 320, 22
     LTEXT "代理模式：", -1, 10, 73, 70, 12
     COMBOBOX IDC_PROXY_MODE, 82, 70, 248, 70, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT "HTTP 代理地址：", -1, 10, 99, 75, 12

@@ -1,5 +1,7 @@
 build*/
-CodexUsage.ini
-CodexUsage.ini.tmp
+TrafficMonitor/
+CursorUsage.ini
+CursorUsage.ini.tmp
 .history/
 docs/
+.idea/

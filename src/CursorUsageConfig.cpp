@@ -1,4 +1,4 @@
-#include "CodexUsageConfig.h"
+#include "CursorUsageConfig.h"
 
 #include <Windows.h>
 #include <winhttp.h>
@@ -23,20 +23,20 @@ std::wstring ReadEnv(const wchar_t* name) {
 
 std::wstring ReadValue(const std::wstring& path, const wchar_t* key, const wchar_t* fallback = L"") {
     std::vector<wchar_t> buffer(32768);
-    GetPrivateProfileStringW(L"CodexUsage", key, fallback, buffer.data(), static_cast<DWORD>(buffer.size()), path.c_str());
+    GetPrivateProfileStringW(L"CursorUsage", key, fallback, buffer.data(), static_cast<DWORD>(buffer.size()), path.c_str());
     return buffer.data();
 }
 }
 
-std::wstring ResolveCodexConfigPath() {
+std::wstring ResolveCursorConfigPath() {
     std::vector<wchar_t> buffer(32768);
     const DWORD length = GetModuleFileNameW(reinterpret_cast<HMODULE>(&__ImageBase), buffer.data(), static_cast<DWORD>(buffer.size()));
     const std::wstring module(buffer.data(), length);
-    return module.substr(0, module.find_last_of(L"\\/") + 1) + L"CodexUsage.ini";
+    return module.substr(0, module.find_last_of(L"\\/") + 1) + L"CursorUsage.ini";
 }
 
-CodexUsageConfig LoadCodexConfig(const std::wstring& path) {
-    CodexUsageConfig config;
+CursorUsageConfig LoadCursorConfig(const std::wstring& path) {
+    CursorUsageConfig config;
     config.authPath = ReadValue(path, L"auth_path");
     config.proxyServer = ReadValue(path, L"proxy_server");
     const auto mode = ReadValue(path, L"proxy_mode", L"direct");
@@ -46,7 +46,7 @@ CodexUsageConfig LoadCodexConfig(const std::wstring& path) {
     return config;
 }
 
-bool NormalizeCodexConfig(CodexUsageConfig* config, std::wstring* error) {
+bool NormalizeCursorConfig(CursorUsageConfig* config, std::wstring* error) {
     if (error) error->clear();
     if (config->proxyMode != ProxyMode::System && config->proxyMode != ProxyMode::Direct && config->proxyMode != ProxyMode::Manual) {
         if (error) *error = L"请选择有效的代理模式。";
@@ -84,12 +84,12 @@ bool NormalizeCodexConfig(CodexUsageConfig* config, std::wstring* error) {
     return true;
 }
 
-bool SaveCodexConfig(const CodexUsageConfig& input, std::wstring* error, const std::wstring& path) {
+bool SaveCursorConfig(const CursorUsageConfig& input, std::wstring* error, const std::wstring& path) {
     auto config = input;
-    if (!NormalizeCodexConfig(&config, error)) return false;
+    if (!NormalizeCursorConfig(&config, error)) return false;
     const wchar_t* mode = config.proxyMode == ProxyMode::Manual ? L"manual" :
         config.proxyMode == ProxyMode::Direct ? L"direct" : L"system";
-    const std::wstring text = L"\ufeff[CodexUsage]\r\nauth_path=" + config.authPath +
+    const std::wstring text = L"\ufeff[CursorUsage]\r\nauth_path=" + config.authPath +
         L"\r\nproxy_mode=" + mode + L"\r\nproxy_server=" + config.proxyServer + L"\r\n";
     const auto temporary = path + L".tmp";
     HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -110,13 +110,61 @@ bool SaveCodexConfig(const CodexUsageConfig& input, std::wstring* error, const s
     return true;
 }
 
-std::wstring ResolveCodexAuthPath(const CodexUsageConfig& config) {
-    if (!config.authPath.empty()) return config.authPath;
-    auto home = ReadEnv(L"CODEX_HOME");
-    if (home.empty()) {
-        home = ReadEnv(L"USERPROFILE");
-        home = home.empty() ? L".codex" : home + L"\\.codex";
+namespace {
+
+void AppendUniquePath(std::vector<std::wstring>* paths, std::wstring path) {
+    if (paths == nullptr || path.empty()) {
+        return;
     }
-    if (home.back() != L'\\' && home.back() != L'/') home += L'\\';
-    return home + L"auth.json";
+    for (const auto& existing : *paths) {
+        if (_wcsicmp(existing.c_str(), path.c_str()) == 0) {
+            return;
+        }
+    }
+    paths->push_back(std::move(path));
+}
+
+std::wstring JoinPath(std::wstring base, const wchar_t* relative) {
+    if (base.empty()) {
+        return {};
+    }
+    if (base.back() != L'\\' && base.back() != L'/') {
+        base += L'\\';
+    }
+    base += relative;
+    return base;
+}
+
+}  // namespace
+
+std::vector<std::wstring> ResolveCursorAuthCandidates(const CursorUsageConfig& config) {
+    if (!config.authPath.empty()) {
+        return {config.authPath};
+    }
+
+    std::vector<std::wstring> paths;
+    const auto appData = ReadEnv(L"APPDATA");
+    if (!appData.empty()) {
+        AppendUniquePath(&paths, JoinPath(appData, L"Cursor\\User\\globalStorage\\state.vscdb"));
+        AppendUniquePath(&paths, JoinPath(appData, L"Cursor\\auth.json"));
+    }
+
+    const auto profile = ReadEnv(L"USERPROFILE");
+    if (!profile.empty()) {
+        AppendUniquePath(&paths, JoinPath(profile, L"AppData\\Roaming\\Cursor\\User\\globalStorage\\state.vscdb"));
+        AppendUniquePath(&paths, JoinPath(profile, L"AppData\\Roaming\\Cursor\\auth.json"));
+        AppendUniquePath(&paths, JoinPath(profile, L".cursor\\auth.json"));
+    }
+
+    if (paths.empty()) {
+        AppendUniquePath(&paths, L"Cursor\\User\\globalStorage\\state.vscdb");
+        AppendUniquePath(&paths, L"Cursor\\auth.json");
+        AppendUniquePath(&paths, L".cursor\\auth.json");
+    }
+    return paths;
+}
+
+std::wstring ResolveCursorAuthPath(const CursorUsageConfig& config) {
+    const auto candidates = ResolveCursorAuthCandidates(config);
+    return candidates.empty() ? L"" : candidates.front();
 }

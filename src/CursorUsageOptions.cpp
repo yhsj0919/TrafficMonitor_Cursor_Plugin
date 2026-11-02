@@ -1,4 +1,4 @@
-#include "CodexUsageOptions.h"
+#include "CursorUsageOptions.h"
 #include "resource.h"
 #include <commdlg.h>
 #include <vector>
@@ -14,9 +14,9 @@ std::wstring ReadEdit(HWND dialog, int id) {
 }
 
 INT_PTR CALLBACK OptionsProc(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam) {
-    auto* config = reinterpret_cast<CodexUsageConfig*>(GetWindowLongPtrW(dialog, DWLP_USER));
+    auto* config = reinterpret_cast<CursorUsageConfig*>(GetWindowLongPtrW(dialog, DWLP_USER));
     if (message == WM_INITDIALOG) {
-        config = reinterpret_cast<CodexUsageConfig*>(lparam);
+        config = reinterpret_cast<CursorUsageConfig*>(lparam);
         SetWindowLongPtrW(dialog, DWLP_USER, lparam);
         SetDlgItemTextW(dialog, IDC_AUTH_PATH, config->authPath.c_str());
         SetDlgItemTextW(dialog, IDC_PROXY_SERVER, config->proxyServer.c_str());
@@ -40,7 +40,7 @@ INT_PTR CALLBACK OptionsProc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
             OPENFILENAMEW ofn{};
             ofn.lStructSize = sizeof(ofn);
             ofn.hwndOwner = dialog;
-            ofn.lpstrFilter = L"JSON 文件 (*.json)\0*.json\0所有文件\0*.*\0";
+            ofn.lpstrFilter = L"Cursor 状态库 (*.vscdb)\0*.vscdb\0JSON 文件 (*.json)\0*.json\0所有文件\0*.*\0";
             ofn.lpstrFile = file.data();
             ofn.nMaxFile = static_cast<DWORD>(file.size());
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
@@ -53,8 +53,8 @@ INT_PTR CALLBACK OptionsProc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
             next.proxyServer = ReadEdit(dialog, IDC_PROXY_SERVER);
             next.proxyMode = static_cast<ProxyMode>(SendDlgItemMessageW(dialog, IDC_PROXY_MODE, CB_GETCURSEL, 0, 0));
             std::wstring error;
-            if (!NormalizeCodexConfig(&next, &error) || !SaveCodexConfig(next, &error)) {
-                MessageBoxW(dialog, error.c_str(), L"Codex Usage", MB_OK | MB_ICONERROR);
+            if (!NormalizeCursorConfig(&next, &error) || !SaveCursorConfig(next, &error)) {
+                MessageBoxW(dialog, error.c_str(), L"Cursor Usage", MB_OK | MB_ICONERROR);
                 return TRUE;
             }
             *config = std::move(next);
@@ -74,9 +74,9 @@ INT_PTR CALLBACK OptionsProc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
 }
 }
 
-bool ShowCodexOptions(HWND parent, CodexUsageConfig* config) {
+bool ShowCursorOptions(HWND parent, CursorUsageConfig* config) {
     const auto result = DialogBoxParamW(reinterpret_cast<HMODULE>(&__ImageBase), MAKEINTRESOURCEW(IDD_OPTIONS),
         parent, OptionsProc, reinterpret_cast<LPARAM>(config));
-    if (result == -1) MessageBoxW(parent, L"无法打开插件选项。", L"Codex Usage", MB_OK | MB_ICONERROR);
+    if (result == -1) MessageBoxW(parent, L"无法打开插件选项。", L"Cursor Usage", MB_OK | MB_ICONERROR);
     return result == IDOK;
 }
