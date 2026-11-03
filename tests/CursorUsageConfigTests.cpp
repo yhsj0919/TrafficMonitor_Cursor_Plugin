@@ -1,6 +1,7 @@
 #include <winsock2.h>
 #include "CursorUsageConfig.h"
 #include "CursorUsageFetcher.h"
+#include "CursorSafeStorage.h"
 #include "CursorSqlite.h"
 #include "sqlite3.h"
 #include <Windows.h>
@@ -88,6 +89,67 @@ void CheckSqliteAuthRead(const std::wstring& dbPath) {
     Check(email.has_value() && *email == "user@example.com", "read email from sqlite");
     DeleteFileW(dbPath.c_str());
 }
+
+void WriteUtf8File(const std::wstring& path, const std::string& text) {
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(file != INVALID_HANDLE_VALUE, "create utf8 auth file");
+    DWORD written = 0;
+    Check(WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) && written == text.size(),
+          "write utf8 auth file");
+    CloseHandle(file);
+}
+
+void CheckEncryptedTokenFallback(const std::wstring& basePath) {
+    Check(IsCursorSafeStorageToken("cursor-safe-storage:v1:AAAA"), "detect sealed cursor token prefix");
+    Check(!IsCursorSafeStorageToken("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.a.b"), "plaintext JWT is not sealed");
+
+    std::wstring resolveError;
+    auto plain = ResolveCursorAccessToken("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.a.b", L"", &resolveError);
+    Check(plain.has_value() && *plain == "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.a.b", "plaintext token passes through");
+    Check(!ResolveCursorAccessToken("cursor-safe-storage:v1:not-a-real-blob", L"", &resolveError).has_value(),
+          "reject undecryptable sealed token");
+    Check(!resolveError.empty(), "undecryptable sealed token sets error");
+
+    const std::wstring dbPath = basePath + L".encrypted.vscdb";
+    const std::wstring authJsonPath = basePath + L".fallback.auth.json";
+
+    sqlite3* db = nullptr;
+    Check(sqlite3_open16(dbPath.c_str(), &db) == SQLITE_OK, "create encrypted-token sqlite db");
+    Check(sqlite3_exec(db,
+                       "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB);"
+                       "INSERT INTO ItemTable VALUES ('cursorAuth/accessToken', 'cursor-safe-storage:v1:not-a-real-blob');"
+                       "INSERT INTO ItemTable VALUES ('cursorAuth/refreshToken', 'cursor-safe-storage:v1:not-a-real-blob');"
+                       "INSERT INTO ItemTable VALUES ('cursorAuth/cachedEmail', 'sealed@example.com');"
+                       "INSERT INTO ItemTable VALUES ('cursorAuth/stripeMembershipType', 'pro');",
+                       nullptr, nullptr, nullptr) == SQLITE_OK,
+          "seed encrypted ItemTable");
+    sqlite3_close(db);
+
+    WriteUtf8File(authJsonPath, R"({"accessToken":"fallback-jwt-token","refreshToken":"fallback-refresh"})");
+
+    // Custom path points only at the sealed DB: must fail instead of sending ciphertext as Bearer.
+    CursorUsageConfig sealedOnly;
+    sealedOnly.authPath = dbPath;
+    sealedOnly.proxyMode = ProxyMode::Direct;
+    auto sealedSnapshot = CursorUsageFetcher{}.Fetch(sealedOnly);
+    Check(!sealedSnapshot.success, "sealed-only auth fails");
+    Check(sealedSnapshot.errorMessage.find(L"encrypted at rest") != std::wstring::npos ||
+              sealedSnapshot.errorMessage.find(L"safe-storage") != std::wstring::npos ||
+              sealedSnapshot.errorMessage.find(L"decrypt") != std::wstring::npos,
+          "sealed-only auth reports encryption");
+
+    CursorUsageConfig jsonConfig;
+    jsonConfig.authPath = authJsonPath;
+    jsonConfig.proxyMode = ProxyMode::Manual;
+    jsonConfig.proxyServer = L"127.0.0.1:1";
+    auto jsonSnapshot = CursorUsageFetcher{}.Fetch(jsonConfig);
+    Check(!jsonSnapshot.success, "synthetic fallback token cannot reach API");
+    Check(jsonSnapshot.errorMessage.find(L"missing accessToken") == std::wstring::npos, "fallback auth.json is readable");
+    Check(jsonSnapshot.errorMessage.find(L"encrypted at rest") == std::wstring::npos, "fallback auth.json is not sealed");
+
+    DeleteFileW(dbPath.c_str());
+    DeleteFileW(authJsonPath.c_str());
+}
 }
 
 void RunCursorConfigTests() {
@@ -156,5 +218,6 @@ void RunCursorConfigTests() {
           "fetcher reads custom auth path and reports missing file");
     CheckManualProxy(path + L".auth.json");
     CheckSqliteAuthRead(path + L".state.vscdb");
+    CheckEncryptedTokenFallback(path);
     DeleteFileW(file);
 }

@@ -1,5 +1,6 @@
 #include "CursorUsageFetcher.h"
 
+#include "CursorSafeStorage.h"
 #include "CursorSqlite.h"
 #include "JsonLite.h"
 
@@ -222,21 +223,58 @@ std::optional<CursorUsageFetcher::AuthTokens> CursorUsageFetcher::ReadAuthTokens
     }
 
     std::wstring lastError;
+    std::wstring cachedEmail;
+    std::wstring cachedPlan;
+    bool sawEncryptedToken = false;
+
     for (const auto& authPath : candidates) {
         std::wstring attemptError;
         auto tokens = ReadAuthTokensFromPath(authPath, &attemptError);
-        if (tokens.has_value()) {
-            if (errorMessage != nullptr) {
-                errorMessage->clear();
+        if (!tokens.has_value()) {
+            if (attemptError.find(L"encrypted at rest") != std::wstring::npos ||
+                attemptError.find(L"safe-storage") != std::wstring::npos ||
+                attemptError.find(L"decrypt") != std::wstring::npos) {
+                sawEncryptedToken = true;
+                // Email/plan stay plaintext in state.vscdb even when tokens are sealed.
+                if (EndsWithIgnoreCase(authPath, L".vscdb")) {
+                    if (auto email = ReadCursorSqliteItem(authPath, "cursorAuth/cachedEmail", nullptr); email.has_value()) {
+                        cachedEmail = Utf8ToWide(*email);
+                    }
+                    if (auto plan = ReadCursorSqliteItem(authPath, "cursorAuth/stripeMembershipType", nullptr);
+                        plan.has_value()) {
+                        cachedPlan = Utf8ToWide(*plan);
+                    }
+                }
             }
-            return tokens;
+            lastError = attemptError;
+            continue;
         }
-        lastError = attemptError;
+
+        if (tokens->email.empty()) {
+            tokens->email = cachedEmail;
+        } else {
+            cachedEmail = tokens->email;
+        }
+        if (tokens->planType.empty()) {
+            tokens->planType = cachedPlan;
+        } else {
+            cachedPlan = tokens->planType;
+        }
+
+        if (errorMessage != nullptr) {
+            errorMessage->clear();
+        }
+        return tokens;
     }
 
     if (errorMessage != nullptr) {
         if (candidates.size() == 1) {
             *errorMessage = lastError;
+        } else if (sawEncryptedToken) {
+            *errorMessage =
+                L"Cursor desktop encrypts auth tokens (cursor-safe-storage); "
+                L"decryption failed and no usable auth.json fallback was found. "
+                L"last error: " + lastError;
         } else {
             *errorMessage = L"cannot find Cursor auth in default locations; last error: " + lastError;
         }
@@ -248,6 +286,34 @@ std::optional<CursorUsageFetcher::AuthTokens> CursorUsageFetcher::ReadAuthTokens
     const std::wstring& authPath, std::wstring* errorMessage) const {
     AuthTokens tokens;
     tokens.sourcePath = authPath;
+
+    auto finalizeTokens = [&](AuthTokens candidate) -> std::optional<AuthTokens> {
+        std::wstring resolveError;
+        auto access = ResolveCursorAccessToken(candidate.accessToken, authPath, &resolveError);
+        if (!access.has_value()) {
+            if (errorMessage != nullptr) {
+                if (IsCursorSafeStorageToken(candidate.accessToken)) {
+                    *errorMessage = L"Cursor token is encrypted at rest (" + authPath + L"): " + resolveError;
+                } else {
+                    *errorMessage = resolveError.empty() ? L"unusable Cursor access token" : resolveError;
+                }
+            }
+            return std::nullopt;
+        }
+        candidate.accessToken = std::move(*access);
+
+        if (!candidate.refreshToken.empty() && IsCursorSafeStorageToken(candidate.refreshToken)) {
+            std::wstring refreshError;
+            auto refresh = ResolveCursorAccessToken(candidate.refreshToken, authPath, &refreshError);
+            if (refresh.has_value()) {
+                candidate.refreshToken = std::move(*refresh);
+            } else {
+                // Access token may still work; drop unusable encrypted refresh token.
+                candidate.refreshToken.clear();
+            }
+        }
+        return candidate;
+    };
 
     if (EndsWithIgnoreCase(authPath, L".vscdb")) {
         std::optional<std::string> access = ReadCursorSqliteItem(authPath, "cursorAuth/accessToken", errorMessage);
@@ -264,7 +330,7 @@ std::optional<CursorUsageFetcher::AuthTokens> CursorUsageFetcher::ReadAuthTokens
         if (auto plan = ReadCursorSqliteItem(authPath, "cursorAuth/stripeMembershipType", nullptr); plan.has_value()) {
             tokens.planType = Utf8ToWide(*plan);
         }
-        return tokens;
+        return finalizeTokens(std::move(tokens));
     }
 
     std::optional<std::string> jsonText = LoadFileUtf8(authPath, errorMessage);
@@ -308,7 +374,7 @@ std::optional<CursorUsageFetcher::AuthTokens> CursorUsageFetcher::ReadAuthTokens
             tokens.email = Utf8ToWide(std::string(*email));
         }
     }
-    return tokens;
+    return finalizeTokens(std::move(tokens));
 }
 
 std::optional<std::string> CursorUsageFetcher::LoadFileUtf8(const std::wstring& path, std::wstring* errorMessage) const {

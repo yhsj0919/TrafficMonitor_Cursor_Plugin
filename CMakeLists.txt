@@ -59,6 +59,7 @@ add_library(CursorUsageCore STATIC
     src/JsonLite.cpp
     src/CursorUsageConfig.cpp
     src/CursorSqlite.cpp
+    src/CursorSafeStorage.cpp
 )
 
 target_include_directories(CursorUsageCore PUBLIC
@@ -77,7 +78,7 @@ if(MSVC)
     target_compile_options(CursorUsageCore PRIVATE /utf-8)
 endif()
 
-target_link_libraries(CursorUsageCore PUBLIC winhttp sqlite3)
+target_link_libraries(CursorUsageCore PUBLIC winhttp sqlite3 crypt32 bcrypt)
 
 add_library(CursorUsage SHARED
     src/CursorUsagePlugin.cpp

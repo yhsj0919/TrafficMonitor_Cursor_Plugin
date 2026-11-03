@@ -12,7 +12,7 @@
 
 ## 数据来源
 
-插件选项中的访问令牌路径留空时，按顺序自动查找（找到可用令牌即停止；自定义路径不回退）：
+插件选项中的访问令牌路径留空时，按顺序自动查找（找到**可用**令牌即停止；自定义路径不回退）：
 
 1. `%APPDATA%\Cursor\User\globalStorage\state.vscdb`（Cursor IDE）
 2. `%APPDATA%\Cursor\auth.json`（Cursor CLI / agent login）
@@ -24,6 +24,8 @@
 - `cursorAuth/refreshToken`（过期时尝试刷新，不写回数据库）
 - `cursorAuth/cachedEmail`
 - `cursorAuth/stripeMembershipType`
+
+较新的 Cursor 可能把 `accessToken` / `refreshToken` 存成 `cursor-safe-storage:v1:` 密文。插件会尝试用本机 `Local State` 的 `os_crypt` 密钥解密；解密失败则跳过该文件并继续尝试后面的 `auth.json`，**不会**把密文当成 Bearer 发送。邮箱等非加密字段仍可从 `state.vscdb` 读取并与回退令牌合并显示。
 
 `auth.json` 读取 `accessToken` / `refreshToken`（也兼容嵌套的 `tokens.access_token`）。也可在选项中手动指定上述任一文件的完整路径。
 
